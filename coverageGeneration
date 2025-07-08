@@ -1,0 +1,127 @@
+#!/bin/bash
+
+originalFontName=$(osascript -e 'tell application "Terminal" to font name of window 1')
+originalFontSize=$(osascript -e 'tell application "Terminal" to font size of window 1')
+
+osascript -e 'tell application "Terminal"
+    set font name of window 1 to "Helvetica"
+    set font size of window 1 to 10
+end tell'
+
+logPath=""
+if [[ $# -eq 1 && -f "$1" && "$1" = *.log ]]; then
+    logPath="$1"
+else
+    read -p "device.log拖过来: " logPath
+    if [[ ! -f "$logPath" || "$logPath" != *.log ]]; then
+        echo "这似乎不是device.log"
+        exit
+    fi
+fi
+
+printf "\033c"
+
+awk '
+BEGIN {
+    GREEN = "\033[0;32m"
+    RED = "\033[0;31m"
+    ORANGE = "\033[38;5;202m"
+    RESET = "\033[0m"
+    last_name = ""
+}
+ 
+function add_result(name, status) {
+    total++
+    statuses[total] = status
+    names[total] = name
+ 
+    if (status == "V") pass++
+    else if (status == "X") fail++
+    else notrun++
+}
+ 
+function extract_name(line) {
+    start = index(line, "[<")
+    if (start == 0) return "Unknown"
+ 
+    block = substr(line, start)
+    n = split(block, fields, /[<>]/)
+    if (length(fields) >= 6) {
+        gsub(/[ \t]/, "", fields[2])
+        gsub(/[ \t]/, "", fields[4])
+        return fields[2] "_" fields[4]
+    }
+    return "Unknown"
+}
+ 
+/\[Test (Start|Begin)\]/ {
+    current_name = extract_name($0)
+    current_status = "~"
+    in_block = 1
+    next
+}
+ 
+/\[Action Pass\]/ {
+    if (in_block) current_status = "V"
+    next
+}
+ 
+/\[Action Fail\]/ {
+    if (in_block) current_status = "X"
+    next
+}
+ 
+/\[Test End\]/ {
+    if (in_block) {
+        if (current_name != last_name) {
+            add_result(current_name, current_status)
+            last_name = current_name
+        }
+        in_block = 0
+    }
+    next
+}
+ 
+/\[Test Pass\]/ {
+    name = extract_name($0)
+    if (name != last_name) {
+        add_result(name, "V")
+        last_name = name
+    }
+    next
+}
+ 
+/\[Test Fail\]/ {
+    name = extract_name($0)
+    if (name != last_name) {
+        add_result(name, "X")
+        last_name = name
+    }
+    next
+}
+ 
+END {
+    if (total == 0) total = 1
+ 
+    printf "%sV%s Pass:%.2f%%(%d/%d)  ", GREEN, RESET, pass * 100 / total, pass, total
+    printf "%sX%s Fail:%.2f%%(%d/%d)  ", RED, RESET, fail * 100 / total, fail, total
+    printf "%s~%s Didn'\''t try:%.2f%%(%d/%d)\n", ORANGE, RESET, notrun * 100 / total, notrun, total
+ 
+    for (i = 1; i <= total; i++) {
+        sym = statuses[i]
+        line = (sym == "V" ? GREEN "V" RESET : sym == "X" ? RED "X" RESET : ORANGE "~" RESET) " " names[i]
+        if (i == total) {
+            printf "%s", line  # no newline on last
+        } else {
+            printf "%s\n", line
+        }
+    }
+}
+' "$logPath"
+
+read
+
+osascript -e "tell application \"Terminal\"
+    set font name of window 1 to \"$originalFontName\"
+    set font size of window 1 to \"$originalFontSize\"
+end tell"
