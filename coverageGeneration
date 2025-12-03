@@ -27,15 +27,6 @@ BEGIN {
     RED = "\033[0;31m"
     ORANGE = "\033[38;5;202m"
     RESET = "\033[0m"
-    last_name = ""
-}
-function add_result(name, status) {
-    total++
-    statuses[total] = status
-    names[total] = name
-    if (status == "V") pass++
-    else if (status == "X") fail++
-    else notrun++
 }
 function extract_name(line) {
     start = index(line, "[<")
@@ -49,65 +40,78 @@ function extract_name(line) {
     }
     return "Unknown"
 }
+
+# Test Start
 /\[Test (Start|Begin)\]/ {
-    current_name = extract_name($0)
-    current_status = "~"
-    in_block = 1
+    name = extract_name($0)
+    status[name] = "~"       # default
+    running[name] = 1
+    if (!(name in order)) {
+        order[++count] = name
+    }
     next
 }
+
+# Action Pass
 /\[Action Pass\]/ {
-    if (in_block && current_name != last_name) {
-        add_result(current_name, "V")
-        last_name = current_name
-        in_block = 0   # 直接结束该测试，防止漏统计
-    }
+    name = extract_name($0)
+    status[name] = "V"
+    running[name] = 0
     next
 }
+
+# Action Fail
 /\[Action Fail\]/ {
-    if (in_block && current_name != last_name) {
-        add_result(current_name, "X")
-        last_name = current_name
-        in_block = 0   # 直接结束该测试
-    }
+    name = extract_name($0)
+    status[name] = "X"
+    running[name] = 0
     next
 }
-/\[Test End\]/ {
-    if (in_block && current_name != last_name) {
-        add_result(current_name, current_status)
-        last_name = current_name
-    }
-    in_block = 0
-    next
-}
+
+# Test Pass
 /\[Test Pass\]/ {
     name = extract_name($0)
-    if (name != last_name) {
-        add_result(name, "V")
-        last_name = name
-    }
+    status[name] = "V"
+    running[name] = 0
     next
 }
+
+# Test Fail
 /\[Test Fail\]/ {
     name = extract_name($0)
-    if (name != last_name) {
-        add_result(name, "X")
-        last_name = name
-    }
+    status[name] = "X"
+    running[name] = 0
     next
 }
+
+# Test End
+/\[Test End\]/ {
+    name = extract_name($0)
+    running[name] = 0
+    # if still "~", keep it "~"
+    next
+}
+
 END {
-    if (total == 0) total = 1
+    pass = fail = notrun = 0
+    for (i = 1; i <= count; i++) {
+        s = status[order[i]]
+        if (s == "V") pass++
+        else if (s == "X") fail++
+        else notrun++
+    }
+
+    total = count ? count : 1
+
     printf "%sV%s Pass:%.2f%%(%d/%d) ", GREEN, RESET, pass * 100 / total, pass, total
     printf "%sX%s Fail:%.2f%%(%d/%d) ", RED, RESET, fail * 100 / total, fail, total
     printf "%s~%s Didn'\''t try:%.2f%%(%d/%d)\n", ORANGE, RESET, notrun * 100 / total, notrun, total
-    for (i = 1; i <= total; i++) {
-        sym = statuses[i]
-        line = (sym == "V" ? GREEN "V" RESET : sym == "X" ? RED "X" RESET : ORANGE "~" RESET) " " names[i]
-        if (i == total) {
-            printf "%s", line # no newline on last
-        } else {
-            printf "%s\n", line
-        }
+
+    for (i = 1; i <= count; i++) {
+        name = order[i]
+        s = status[name]
+        color = (s == "V" ? GREEN : s == "X" ? RED : ORANGE)
+        printf "%s%s%s %s\n", color, s, RESET, name
     }
 }
 ' "$logPath"
